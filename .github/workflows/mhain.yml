@@ -31,7 +31,7 @@ jobs:
           sudo apt install -y \
             bc cpio flex bison git python-is-python3 \
             tar perl wget curl lz4 libssl-dev \
-            libclang-dev libelf-dev llvm-dev
+            libclang-dev libelf-dev llvm-dev ccache 
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git fetch --tags --force
 
@@ -42,6 +42,14 @@ jobs:
           sudo fallocate -l 12G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=12288
           sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
           free -h
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+         path: ~/.ccache
+         key: ccache-${{ runner.os }}-${{ github.event.inputs.BRANCH }}-${{ github.sha }}
+         restore-keys: |
+          ccache-${{ runner.os }}-${{ github.event.inputs.BRANCH }}-
+          ccache-${{ runner.os }}-
 
       - name: Fetch toolchains (Clang 11 + GCC 4.9)
         working-directory: kernel_root
@@ -133,6 +141,10 @@ jobs:
           export PATH=$(pwd)/toolchains/clang/bin:$PATH
           export CROSS_COMPILE=$(pwd)/toolchains/google/bin/aarch64-linux-android-
           export CLANG_TRIPLE=aarch64-linux-gnu-
+          export USE_CCACHE=1
+          export CC="ccache clang"
+          export CXX="ccache clang++"
+          export CCACHE_DIR=$HOME/.ccache
           export RUSTUP_TOOLCHAIN=nightly-2024-02-01
           export RUSTC="$HOME/.cargo/bin/rustc"
           export CARGO="$HOME/.cargo/bin/cargo"
@@ -142,6 +154,8 @@ jobs:
           export IS_CI=true
           export DEFCONFIG=exlinux_dri_defconfig
           export DEVICE_ID=A12s
+          ccache -M 10G
+          ccache -z
 
           if [[ "${{ github.event.inputs.SELINUX_PERMISSIVE }}" == "true" ]]; then
             echo "CONFIG_SECURITY_SELINUX_ALWAYS_PERMISSIVE=y" >> arch/arm64/configs/$DEFCONFIG
