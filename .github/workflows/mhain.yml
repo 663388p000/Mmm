@@ -1,0 +1,194 @@
+name: Build Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      BRANCH:
+        description: Kernel branch
+        default: "main"
+        required: true
+      SELINUX_PERMISSIVE:
+        description: Permissive SELinux
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          repository: 663388p000/exlinux-
+          path: kernel_root
+          ref: ${{ github.event.inputs.BRANCH }}
+          fetch-depth: 0
+
+      - name: Prepare dependencies + fetch tags
+        working-directory: kernel_root
+        run: |
+          sudo apt update -y
+          sudo apt install -y \
+            bc cpio flex bison git python-is-python3 \
+            tar perl wget curl lz4 libssl-dev \
+            libclang-dev libelf-dev llvm-dev
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git fetch --tags --force
+
+      - name: Recreate 12GB Swap
+        run: |
+          sudo swapoff -a || true
+          sudo rm -f /swapfile
+          sudo fallocate -l 12G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=12288
+          sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+          free -h
+
+      - name: Fetch toolchains (Clang 11 + GCC 4.9)
+        working-directory: kernel_root
+        run: |
+          mkdir -p toolchains && cd toolchains
+          git clone --depth=1 -b clang-11 https://github.com/rsuntk/toolchains.git clang
+          git clone --depth=1 -b androidcc-4.9 https://github.com/rsuntk/toolchains.git google
+
+      - name: Remove pre-installed Rust
+        run: |
+          rustup self uninstall -y 2>/dev/null || true
+          sudo rm -rf "$HOME/.cargo" "$HOME/.rustup" /usr/share/rust \
+                      /usr/local/cargo /usr/local/rustup
+          sudo rm -f /usr/local/bin/rustup /usr/local/bin/rustc \
+                     /usr/local/bin/cargo /usr/bin/rustup \
+                     /usr/bin/rustc /usr/bin/cargo
+          which rustc || echo "rustc clean"
+
+      - name: Install Rust toolchain
+        run: |
+          CLANG_BIN="$GITHUB_WORKSPACE/kernel_root/toolchains/clang/bin"
+
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain none
+          source "$HOME/.cargo/env"
+
+          rustup toolchain install nightly-2024-02-01
+          rustup component add rust-src  --toolchain nightly-2024-02-01
+          rustup component add rustfmt   --toolchain nightly-2024-02-01
+          rustup target add aarch64-unknown-none --toolchain nightly-2024-02-01
+          cargo +nightly-2024-02-01 install bindgen-cli --locked
+
+          mkdir -p "$HOME/.cargo"
+          printf '[target.aarch64-unknown-none]\nlinker = "%s/clang"\nar = "%s/llvm-ar"\n' \
+            "$CLANG_BIN" "$CLANG_BIN" > "$HOME/.cargo/config.toml"
+
+          echo "$HOME/.cargo/bin"                    >> "$GITHUB_PATH"
+          echo "RUSTUP_HOME=$HOME/.rustup"            >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$HOME/.cargo"              >> "$GITHUB_ENV"
+          echo "RUSTUP_TOOLCHAIN=nightly-2024-02-01"  >> "$GITHUB_ENV"
+          echo "RUST_TARGET=aarch64-unknown-none"      >> "$GITHUB_ENV"
+          echo "LIBCLANG_PATH=$CLANG_BIN"             >> "$GITHUB_ENV"
+
+          rustc +nightly-2024-02-01 --version
+
+      - name: Set timezone
+        run: |
+          sudo rm -f /etc/localtime
+          sudo ln -sf /usr/share/zoneinfo/Asia/Kolkata /etc/localtime
+
+      - name: Build ARG Rust core (arg_rust.o)
+        working-directory: kernel_root
+        run: |
+          source "$HOME/.cargo/env"
+          ARG_DIR="$GITHUB_WORKSPACE/kernel_root/arg"
+          free -h && echo "rustc: $(rustc +nightly-2024-02-01 --version)"
+
+          rustc +nightly-2024-02-01       \
+            --edition 2021                \
+            --crate-type staticlib        \
+            --crate-name arg_sched        \
+            --target aarch64-unknown-none \
+            -C panic=abort                \
+            -C opt-level=2                \
+            -C codegen-units=1            \
+            -C code-model=small           \
+            -C relocation-model=static    \
+            --emit obj                    \
+            -A dead_code                  \
+            -A unused_variables           \
+            -A non_snake_case             \
+            -A non_upper_case_globals     \
+            -o "$ARG_DIR/arg_rust.o"      \
+            "$ARG_DIR/src/lib.rs"
+
+          ls -lh "$ARG_DIR/arg_rust.o"
+          file   "$ARG_DIR/arg_rust.o"
+          printf 'cmd_%s := pre-built by CI\n' \
+            "$ARG_DIR/arg_rust.o" > "$ARG_DIR/.arg_rust.o.cmd"
+          test -f "$ARG_DIR/arg_rust.o" || { echo "ERROR: Rust build failed"; exit 1; }
+
+      
+      - name: Build kernel
+        id: buildKernel
+        working-directory: kernel_root
+        run: |
+          echo "CONFIG_WIREGUARD=n" >> arch/arm64/configs/exlinux_defconfig
+
+          export PATH=$(pwd)/toolchains/clang/bin:$PATH
+          export CROSS_COMPILE=$(pwd)/toolchains/google/bin/aarch64-linux-android-
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export RUSTUP_TOOLCHAIN=nightly-2024-02-01
+          export RUSTC="$HOME/.cargo/bin/rustc"
+          export CARGO="$HOME/.cargo/bin/cargo"
+          export RUST_LIB_SRC="$(rustc +nightly-2024-02-01 --print sysroot)/lib/rustlib/src/rust/library"
+          export KBUILD_BUILD_USER=exlinux
+          export KBUILD_BUILD_HOST=github
+          export IS_CI=true
+          export DEFCONFIG=exlinux_dri_defconfig
+          export DEVICE_ID=A12s
+
+          if [[ "${{ github.event.inputs.SELINUX_PERMISSIVE }}" == "true" ]]; then
+            echo "CONFIG_SECURITY_SELINUX_ALWAYS_PERMISSIVE=y" >> arch/arm64/configs/$DEFCONFIG
+          fi
+
+          bash build_v2_kernel.sh kernel --jobs $(nproc --all) $DEFCONFIG
+
+          echo "=== Module.symvers — ARG symbols ==="
+          grep -E "arg_enabled|arg_pick|arg_enqueue|arg_wakeup|arg_update|runqueues" \
+            Module.symvers 2>/dev/null || echo "NOT FOUND"
+
+          mv .config build_config.txt || true
+          gitsha1=$(git rev-parse --short HEAD)
+          buildDetails="$(make kernelversion)-${DEVICE_ID}_${gitsha1}-$(date +'%Y%m%d%H%M%S')"
+          echo "buildDetails=$buildDetails" >> "$GITHUB_OUTPUT"
+
+      - name: Build ARG kernel module (arg_sched.ko)
+        working-directory: kernel_root
+        run: |
+          export PATH=$(pwd)/toolchains/clang/bin:$PATH
+
+          make -C "$GITHUB_WORKSPACE/kernel_root"                                  \
+               M="$GITHUB_WORKSPACE/kernel_root/arg"                               \
+               ARCH=arm64                                                           \
+               CC=$(pwd)/toolchains/clang/bin/clang                                \
+               CROSS_COMPILE=$(pwd)/toolchains/google/bin/aarch64-linux-android-   \
+               CLANG_TRIPLE=aarch64-linux-gnu-                                     \
+               CONFIG_SCHAD_ARG_KMM=m                                              \
+               -j$(nproc --all)                                                    \
+               modules
+
+          echo "=== .ko ==="
+          find "$GITHUB_WORKSPACE/kernel_root/arg" -name "*.ko" -exec ls -lh {} \;
+
+          echo "=== undefined ARG symbols ==="
+          nm "$GITHUB_WORKSPACE/kernel_root/arg/arg_sched.ko" 2>/dev/null \
+            | awk '/^ *U /{print $2}' | grep -E "^arg_|^runqueue" \
+            || echo "OK — all resolved"
+
+      - name: Upload kernel images
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kernel-${{ steps.buildKernel.outputs.buildDetails }}
+          if-no-files-found: warn
+          path: |
+            kernel_root/arch/arm64/boot/Image
+            kernel_root/arch/arm64/boot/dts/exynos/*.dtb
+            kernel_root/arch/arm64/boot/dts/samsung/*.dtb
+            kernel_root/arg/arg_sched.ko
+            kernel_root/build_config.txt
