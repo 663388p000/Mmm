@@ -52,7 +52,7 @@ jobs:
           CC: aarch64-linux-android31-clang
           CXX: aarch64-linux-android31-clang++
         run: |
-          make shaders API=31
+          make shaders 
 
       - name: Build
         env:
