@@ -1,80 +1,70 @@
-name: Build FFFF
+name: Build FSR1 Mali Hook
 
 on:
+  push:
+    branches: [ main ]
+  pull_request:
   workflow_dispatch:
-    inputs:
-      BRANCH:
-        description: Branch
-        default: "main"
-        required: true
+
+env:
+  # نسخه‌ای که قبلاً تست شده و کار می‌کنه
+  NDK_VERSION: r26d
+  API_LEVEL: 30
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-
-    env:
-      API: 31
-      NDK_URL: https://dl.google.com/android/repository/android-ndk-r27d-linux.zip
-
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout Source
-        uses: actions/checkout@v4
-        with:
-          repository: 663388p000/FFFF
-          ref: ${{ github.event.inputs.BRANCH }}
-          fetch-depth: 0
+      - uses: actions/checkout@v4
 
-      - name: Install Build Dependencies
+      # فقط چیزی که واقعاً لازمه:
+      #   glslangValidator → کامپایل GLSL به SPIR-V
+      #   xxd              → تبدیل SPIR-V باینری به C header
+      # (vulkan-tools/libvulkan-dev/spirv-tools و... لازم نیستن،
+      #  چون cross-compile می‌کنیم و vulkan.h از خود NDK sysroot میاد)
+      - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            unzip \
-            wget \
-            make \
-            git \
-            vulkan-tools \
-            libvulkan1 \
-            libvulkan-dev \
-            glslang-tools \
-            spirv-tools \
-            spirv-headers \
-            libclang-dev \
-            libelf-dev \
-            llvm-dev
+          sudo apt-get install -y wget unzip make glslang-tools xxd
 
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git fetch --tags --force
-
-      - name: Download Android NDK r27d
+      - name: Download Android NDK
         run: |
-          wget -q "$NDK_URL" -O ndk.zip
+          wget -q "https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip" -O ndk.zip
           unzip -q ndk.zip
-          echo "ANDROID_NDK_HOME=$GITHUB_WORKSPACE/android-ndk-r26d" >> $GITHUB_ENV
-          echo "$GITHUB_WORKSPACE/android-ndk-r27d/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+          echo "ANDROID_NDK_HOME=$GITHUB_WORKSPACE/android-ndk-${NDK_VERSION}" >> "$GITHUB_ENV"
 
-      - name: Build Shaders
-        env:
-          CC: aarch64-linux-android31-clang
-          CXX: aarch64-linux-android31-clang++
+      - name: Verify toolchain
         run: |
-          make shaders
+          echo "NDK: $ANDROID_NDK_HOME"
+          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${API_LEVEL}-clang" --version
+          glslangValidator --version
 
-      - name: Build
-        env:
-          CC: aarch64-linux-android31-clang
-          CXX: aarch64-linux-android31-clang++
-          AR: llvm-ar
-          STRIP: llvm-strip
-        run: |
-          make -j$(nproc)
+      # مرحله‌ی جدا فقط برای خوانایی لاگ (shaders هم prerequisite
+      # خودِ target اصلیه، پس این مرحله تکراری نیست، فقط دو تا
+      # فاز رو واضح از هم جدا می‌کنه: کامپایل شیدر / کامپایل C)
+      - name: Compile shaders (GLSL → SPIR-V → embedded headers)
+        run: make shaders API=${{ env.API_LEVEL }}
 
-      - name: Strip Libraries
-        run: |
-          find . -name "*.so" -exec llvm-strip --strip-unneeded {} \;
+      - name: Build vulkan.fsr1.so
+        run: make -j"$(nproc)" API=${{ env.API_LEVEL }}
 
-      - name: Upload Artifact
+      - name: Show build info
+        run: make info
+
+      - name: Upload .so artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FFFF-arm64-v8a
+          name: vulkan.fsr1.so
+          path: vulkan.fsr1.so
+          if-no-files-found: error
+
+      # آرتیفکت دیباگ: خود فایل‌های .spv و header های generated
+      # (مفیده اگه بخوایم مستقل shader ها رو با spirv-dis بررسی کنیم)
+      - name: Upload SPIR-V artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: shaders-spv
           path: |
-            **/*.so
+            shaders/*.spv
+            shaders/generated/*.h
+          if-no-files-found: warn
