@@ -1,0 +1,68 @@
+name: Build FFFF
+
+on:
+  workflow_dispatch:
+    inputs:
+      BRANCH:
+        description: Branch
+        default: main
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      API: 31
+      NDK_URL: https://dl.google.com/android/repository/android-ndk-r26d-linux.zip
+
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+        with:
+          repository: 663388p000/FFFF
+          ref: ${{ github.event.inputs.BRANCH }}
+          fetch-depth: 0
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            unzip \
+            wget \
+            make \
+            glslang-tools
+
+      - name: Download Android NDK r26d
+        run: |
+          wget -q "$NDK_URL" -O ndk.zip
+          unzip -q ndk.zip
+          echo "ANDROID_NDK_HOME=$GITHUB_WORKSPACE/android-ndk-r26d" >> $GITHUB_ENV
+          echo "$GITHUB_WORKSPACE/android-ndk-r26d/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+
+      - name: Build Shaders
+        env:
+          CC: aarch64-linux-android31-clang
+          CXX: aarch64-linux-android31-clang++
+        run: |
+          make shaders
+
+      - name: Build
+        env:
+          CC: aarch64-linux-android31-clang
+          CXX: aarch64-linux-android31-clang++
+          AR: llvm-ar
+          STRIP: llvm-strip
+        run: |
+          make -j$(nproc)
+
+      - name: Strip Libraries
+        run: |
+          find . -name "*.so" -exec llvm-strip --strip-unneeded {} \;
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFFF-arm64-v8a
+          path: |
+            **/*.so
