@@ -8,7 +8,7 @@ on:
 
 env:
   NDK_VERSION: r26d
-  API_LEVEL: 31
+  API_LEVEL: 30
 
 jobs:
   build:
@@ -30,7 +30,7 @@ jobs:
 
       - name: Download Android NDK
         run: |
-          wget -q "https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip" -O ndk.zip
+          wget -q "https://dl.google.com/android/repository/android-ndk-r26d-linux.zip" -O ndk.zip
           unzip -q ndk.zip
           echo "ANDROID_NDK_HOME=$GITHUB_WORKSPACE/android-ndk-${NDK_VERSION}" >> "$GITHUB_ENV"
           echo "$GITHUB_WORKSPACE/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
@@ -38,15 +38,15 @@ jobs:
       - name: Verify toolchain
         run: |
           echo "NDK: $ANDROID_NDK_HOME"
-          aarch64-linux-android${API_LEVEL}-clang --version
+          aarch64-linux-android-r26d-clang --version
           glslangValidator --version
           
       - name: Build
         env:
-          CC: aarch64-linux-android-${API_LEVEL}-clang
-          CXX: aarch64-linux-android-${API_LEVEL}-clang++
+          CC: aarch64-linux-android-30-clang
+          CXX: aarch64-linux-android-30-clang++
         run: |
-          make -j"$(nproc)" API=${API_LEVEL}
+          make -j"$(nproc)" API=30
 
       - name: Show build info
         run: |
