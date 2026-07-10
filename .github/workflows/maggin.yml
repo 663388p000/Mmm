@@ -9,8 +9,6 @@ on:
 env:
   NDK_VERSION: r26d
   API_LEVEL: 30
-  SOURCE_REPO: https://github.com/663388p000/FFFF/tree/main
-  SOURCE_BRANCH: main
 
 jobs:
   build:
@@ -31,7 +29,7 @@ jobs:
 
       - name: Clone FSR1 source
         run: |
-          git clone --depth 1 --branch ${SOURCE_BRANCH} ${SOURCE_REPO} fsr1-source
+          git clone --depth 1 https://github.com/663388p000/FFFF.git fsr1-source
           echo "PROJECT_DIR=$GITHUB_WORKSPACE/fsr1-source" >> "$GITHUB_ENV"
 
       - name: Verify toolchain
@@ -42,7 +40,7 @@ jobs:
           glslangValidator --version
           xxd --version
 
-      - name: Compile shaders (GLSL → SPIR-V → C headers)
+      - name: Compile shaders
         working-directory: ${{ env.PROJECT_DIR }}
         run: make -j"$(nproc)" shaders API=${{ env.API_LEVEL }}
 
