@@ -9,6 +9,8 @@ on:
 env:
   NDK_VERSION: r26d
   API_LEVEL: 30
+  SOURCE_REPO: https://github.com/663388p000/FFFF/tree/main
+  SOURCE_BRANCH: main
 
 jobs:
   build:
@@ -19,7 +21,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget unzip make glslang-tools xxd
+          sudo apt-get install -y wget unzip make glslang-tools xxd git
 
       - name: Download Android NDK
         run: |
@@ -27,29 +29,36 @@ jobs:
           unzip -q ndk.zip
           echo "ANDROID_NDK_HOME=$GITHUB_WORKSPACE/android-ndk-${NDK_VERSION}" >> "$GITHUB_ENV"
 
+      - name: Clone FSR1 source
+        run: |
+          git clone --depth 1 --branch ${SOURCE_BRANCH} ${SOURCE_REPO} fsr1-source
+          echo "PROJECT_DIR=$GITHUB_WORKSPACE/fsr1-source" >> "$GITHUB_ENV"
+
       - name: Verify toolchain
         run: |
           echo "NDK: $ANDROID_NDK_HOME"
+          echo "Project: $PROJECT_DIR"
           "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${API_LEVEL}-clang" --version
           glslangValidator --version
           xxd --version
 
-      # کامپایل شیدرها (فاز ۱)
       - name: Compile shaders (GLSL → SPIR-V → C headers)
+        working-directory: ${{ env.PROJECT_DIR }}
         run: make -j"$(nproc)" shaders API=${{ env.API_LEVEL }}
 
-      # کامپایل کتابخونه (فاز ۲)
       - name: Build vulkan.fsr1.so
+        working-directory: ${{ env.PROJECT_DIR }}
         run: make -j"$(nproc)" API=${{ env.API_LEVEL }}
 
       - name: Show build info
+        working-directory: ${{ env.PROJECT_DIR }}
         run: make info
 
       - name: Upload .so artifact
         uses: actions/upload-artifact@v4
         with:
           name: vulkan.fsr1.so
-          path: vulkan.fsr1.so
+          path: ${{ env.PROJECT_DIR }}/vulkan.fsr1.so
           if-no-files-found: error
 
       - name: Upload SPIR-V artifacts
@@ -57,6 +66,6 @@ jobs:
         with:
           name: shaders-spv
           path: |
-            shaders/*.spv
-            shaders/generated/*.h
+            ${{ env.PROJECT_DIR }}/shaders/*.spv
+            ${{ env.PROJECT_DIR }}/shaders/generated/*.h
           if-no-files-found: warn
