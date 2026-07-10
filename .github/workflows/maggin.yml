@@ -43,10 +43,10 @@ jobs:
           
       - name: Build
         env:
-          CC: aarch64-linux-android31-clang
-          CXX: aarch64-linux-android31-clang++
+          CC: aarch64-linux-android-${API_LEVEL}-clang
+          CXX: aarch64-linux-android-${API_LEVEL}-clang++
         run: |
-          make -j"$(nproc)" API=31
+          make -j"$(nproc)" API=${API_LEVEL}
 
       - name: Show build info
         run: |
