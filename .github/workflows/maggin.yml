@@ -45,12 +45,12 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git fetch --tags --force
 
-      - name: Download Android NDK r26d
+      - name: Download Android NDK r27d
         run: |
           wget -q "$NDK_URL" -O ndk.zip
           unzip -q ndk.zip
           echo "ANDROID_NDK_HOME=$GITHUB_WORKSPACE/android-ndk-r26d" >> $GITHUB_ENV
-          echo "$GITHUB_WORKSPACE/android-ndk-r26d/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+          echo "$GITHUB_WORKSPACE/android-ndk-r27d/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
       - name: Build Shaders
         env:
