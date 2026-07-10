@@ -9,7 +9,7 @@ on:
 env:
   # نسخه‌ای که قبلاً تست شده و کار می‌کنه
   NDK_VERSION: r26d
-  API_LEVEL: 30
+  API_LEVEL: 31
 
 jobs:
   build:
@@ -25,11 +25,11 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget unzip make glslang-tools xxd
+          sudo apt-get install -y wget unzip make glslang-tools xxd 
 
       - name: Download Android NDK
         run: |
-          wget -q "https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip" -O ndk.zip
+          wget -q "https://dl.google.com/android/repository/android-ndk-r26d-linux.zip" -O ndk.zip
           unzip -q ndk.zip
           echo "ANDROID_NDK_HOME=$GITHUB_WORKSPACE/android-ndk-${NDK_VERSION}" >> "$GITHUB_ENV"
 
