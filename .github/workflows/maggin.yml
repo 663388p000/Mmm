@@ -40,20 +40,7 @@ jobs:
           echo "NDK: $ANDROID_NDK_HOME"
           aarch64-linux-android${API_LEVEL}-clang --version
           glslangValidator --version
-
-      - name: Verify Makefile
-        run: |
-          pwd
-          ls -la
-          grep -n "^shaders:" Makefile || true
-
-      - name: Compile shaders
-        env:
-          CC: aarch64-linux-android31-clang
-          CXX: aarch64-linux-android31-clang++
-        run: |
-          make shaders 
-
+          
       - name: Build
         env:
           CC: aarch64-linux-android31-clang
