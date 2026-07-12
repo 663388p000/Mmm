@@ -42,8 +42,8 @@ jobs:
       # مرحله‌ی جدا فقط برای خوانایی لاگ (shaders هم prerequisite
       # خودِ target اصلیه، پس این مرحله تکراری نیست، فقط دو تا
       # فاز رو واضح از هم جدا می‌کنه: کامپایل شیدر / کامپایل C)
-      - name: Compile shaders (GLSL → SPIR-V → embedded headers)
-        run: make shaders API=${{ env.API_LEVEL }}
+     # - name: Compile shaders (GLSL → SPIR-V → embedded headers)
+      #  run: make shaders API=${{ env.API_LEVEL }}
 
       - name: Build vulkan.fsr1.so
         run: make -j"$(nproc)" API=${{ env.API_LEVEL }}
