@@ -7,6 +7,7 @@ on:
   workflow_dispatch:
 
 env:
+  # نسخه‌ای که قبلاً تست شده و کار می‌کنه
   NDK_VERSION: r26d
   API_LEVEL: 30
 
@@ -16,10 +17,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # فقط چیزی که واقعاً لازمه:
+      #   glslangValidator → کامپایل GLSL به SPIR-V
+      #   xxd              → تبدیل SPIR-V باینری به C header
+      # (vulkan-tools/libvulkan-dev/spirv-tools و... لازم نیستن،
+      #  چون cross-compile می‌کنیم و vulkan.h از خود NDK sysroot میاد)
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget unzip make glslang-tools xxd git
+          sudo apt-get install -y wget unzip make glslang-tools xxd
 
       - name: Download Android NDK
         run: |
@@ -27,43 +33,38 @@ jobs:
           unzip -q ndk.zip
           echo "ANDROID_NDK_HOME=$GITHUB_WORKSPACE/android-ndk-${NDK_VERSION}" >> "$GITHUB_ENV"
 
-      - name: Clone FSR1 source
-        run: |
-          git clone --depth 1 https://github.com/663388p000/FFFF.git fsr1-source
-          echo "PROJECT_DIR=$GITHUB_WORKSPACE/fsr1-source" >> "$GITHUB_ENV"
-
       - name: Verify toolchain
         run: |
           echo "NDK: $ANDROID_NDK_HOME"
-          echo "Project: $PROJECT_DIR"
           "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${API_LEVEL}-clang" --version
           glslangValidator --version
-          xxd --version
 
-      - name: Compile shaders
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: make -j"$(nproc)" shaders API=${{ env.API_LEVEL }}
+      # مرحله‌ی جدا فقط برای خوانایی لاگ (shaders هم prerequisite
+      # خودِ target اصلیه، پس این مرحله تکراری نیست، فقط دو تا
+      # فاز رو واضح از هم جدا می‌کنه: کامپایل شیدر / کامپایل C)
+      - name: Compile shaders (GLSL → SPIR-V → embedded headers)
+        run: make shaders API=${{ env.API_LEVEL }}
 
       - name: Build vulkan.fsr1.so
-        working-directory: ${{ env.PROJECT_DIR }}
         run: make -j"$(nproc)" API=${{ env.API_LEVEL }}
 
       - name: Show build info
-        working-directory: ${{ env.PROJECT_DIR }}
         run: make info
 
       - name: Upload .so artifact
         uses: actions/upload-artifact@v4
         with:
           name: vulkan.fsr1.so
-          path: ${{ env.PROJECT_DIR }}/vulkan.fsr1.so
+          path: vulkan.fsr1.so
           if-no-files-found: error
 
+      # آرتیفکت دیباگ: خود فایل‌های .spv و header های generated
+      # (مفیده اگه بخوایم مستقل shader ها رو با spirv-dis بررسی کنیم)
       - name: Upload SPIR-V artifacts
         uses: actions/upload-artifact@v4
         with:
           name: shaders-spv
           path: |
-            ${{ env.PROJECT_DIR }}/shaders/*.spv
-            ${{ env.PROJECT_DIR }}/shaders/generated/*.h
+            shaders/*.spv
+            shaders/generated/*.h
           if-no-files-found: warn
