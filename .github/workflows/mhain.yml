@@ -10,91 +10,250 @@ on:
       SELINUX_PERMISSIVE:
         description: Permissive SELinux
         type: boolean
+        default: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Kernel Source
-        uses: actions/checkout@v4
-        with:
-          repository: 663388p000/exlinux
-          path: kernel_root
-          ref: ${{ github.event.inputs.BRANCH }}
-          fetch-depth: 0
 
-      - name: Prepare dependencies + fetch tags
+      # ============================================================
+      # Clone Kernel Source
+      # ============================================================
+      - name: Clone Kernel Source
+        run: |
+          git clone \
+            --branch "${{ github.event.inputs.BRANCH }}" \
+            --single-branch \
+            https://github.com/663388p000/exlinux.git \
+            kernel_root
+
+      # ============================================================
+      # Prepare Dependencies
+      # ============================================================
+      - name: Prepare dependencies
         working-directory: kernel_root
         run: |
           sudo apt update -y
+
           sudo apt install -y \
-            bc cpio flex bison git python-is-python3 \
-            tar perl wget curl lz4 libssl-dev \
-            libclang-dev libelf-dev llvm-dev ccache 
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+            bc \
+            cpio \
+            flex \
+            bison \
+            git \
+            python-is-python3 \
+            tar \
+            perl \
+            wget \
+            curl \
+            lz4 \
+            libssl-dev \
+            libclang-dev \
+            libelf-dev \
+            llvm-dev \
+            ccache
+
+          git config --global --add safe.directory "$GITHUB_WORKSPACE/kernel_root"
+
           git fetch --tags --force
 
+      # ============================================================
+      # Recreate 12GB Swap
+      # ============================================================
       - name: Recreate 12GB Swap
         run: |
           sudo swapoff -a || true
           sudo rm -f /swapfile
-          sudo fallocate -l 12G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=12288
-          sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+
+          sudo fallocate -l 12G /swapfile || \
+            sudo dd if=/dev/zero of=/swapfile bs=1M count=12288
+
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+
           free -h
-      - name: Cache ccache
+
+      # ============================================================
+      # Restore ccache
+      # ============================================================
+      - name: Restore ccache
         uses: actions/cache@v4
         with:
-         path: ~/.ccache
-         key: ccache-${{ runner.os }}-${{ github.event.inputs.BRANCH }}-${{ github.sha }}
-         restore-keys: |
-          ccache-${{ runner.os }}-${{ github.event.inputs.BRANCH }}-
-          ccache-${{ runner.os }}-
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-${{ github.event.inputs.BRANCH }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ github.event.inputs.BRANCH }}-
+            ccache-${{ runner.os }}-
 
+      # ============================================================
+      # Configure ccache
+      # ============================================================
+      - name: Configure ccache
+        run: |
+          mkdir -p "$HOME/.ccache"
+
+          ccache --set-config=cache_dir="$HOME/.ccache"
+          ccache --set-config=max_size=10G
+          ccache --set-config=compression=true
+
+          ccache --show-config
+          ccache --zero-stats
+          ccache --show-stats
+
+      # ============================================================
+      # Fetch Toolchains
+      # ============================================================
       - name: Fetch toolchains (Clang 11 + GCC 4.9)
         working-directory: kernel_root
         run: |
-          mkdir -p toolchains && cd toolchains
-          git clone --depth=1 -b clang-11 https://github.com/rsuntk/toolchains.git clang
-          git clone --depth=1 -b androidcc-4.9 https://github.com/rsuntk/toolchains.git google
+          mkdir -p toolchains
+          cd toolchains
 
+          git clone \
+            --depth=1 \
+            -b clang-11 \
+            https://github.com/rsuntk/toolchains.git \
+            clang
+
+          git clone \
+            --depth=1 \
+            -b androidcc-4.9 \
+            https://github.com/rsuntk/toolchains.git \
+            google
+
+      # ============================================================
+      # Set timezone
+      # ============================================================
       - name: Set timezone
         run: |
-          sudo rm -f /etc/localtime
-          sudo ln -sf /usr/share/zoneinfo/Asia/Kolkata /etc/localtime
-          
+          sudo timedatectl set-timezone Asia/Kolkata || true
+          date
+
+      # ============================================================
+      # Build Kernel
+      # ============================================================
       - name: Build kernel
         id: buildKernel
         working-directory: kernel_root
+        shell: bash
         run: |
-          
 
-          export PATH=$(pwd)/toolchains/clang/bin:$PATH
-          export CROSS_COMPILE=$(pwd)/toolchains/google/bin/aarch64-linux-android-
+          export PATH="$(pwd)/toolchains/clang/bin:$PATH"
+
+          export CROSS_COMPILE="$(pwd)/toolchains/google/bin/aarch64-linux-android-"
+
           export CLANG_TRIPLE=aarch64-linux-gnu-
+
           export USE_CCACHE=1
+          export CCACHE_DIR="$HOME/.ccache"
+
           export CC="ccache clang"
           export CXX="ccache clang++"
-          export CCACHE_DIR=$HOME/.ccache         
+
           export KBUILD_BUILD_USER=exlinux
           export KBUILD_BUILD_HOST=github
+
           export IS_CI=true
           export DEFCONFIG=exlinux_dri_defconfig
           export DEVICE_ID=A12s
+
+          echo "========================================"
+          echo "Build Environment"
+          echo "========================================"
+
+          echo "Branch: ${{ github.event.inputs.BRANCH }}"
+          echo "Kernel directory: $(pwd)"
+          echo "Clang: $(which clang)"
+          echo "Clang version:"
+          clang --version
+
+          echo "GCC:"
+          "${CROSS_COMPILE}gcc" --version | head -n 1
+
+          echo "ccache:"
+          ccache --version
+
+          echo "========================================"
+          echo "ccache stats BEFORE build"
+          echo "========================================"
+
+          ccache --show-stats
+
+          # Enable ccache
           ccache -M 10G
+
+          # Clear old temporary statistics
           ccache -z
 
+          # ========================================================
+          # SELinux Permissive
+          # ========================================================
           if [[ "${{ github.event.inputs.SELINUX_PERMISSIVE }}" == "true" ]]; then
-            echo "CONFIG_SECURITY_SELINUX_ALWAYS_PERMISSIVE=y" >> arch/arm64/configs/$DEFCONFIG
+            echo "Enabling permissive SELinux"
+
+            if ! grep -q "^CONFIG_SECURITY_SELINUX_ALWAYS_PERMISSIVE=" \
+              "arch/arm64/configs/$DEFCONFIG"; then
+
+              echo "CONFIG_SECURITY_SELINUX_ALWAYS_PERMISSIVE=y" \
+                >> "arch/arm64/configs/$DEFCONFIG"
+            fi
           fi
 
-          bash build_kernel.sh kernel --jobs $(nproc --all) $DEFCONFIG
+          # ========================================================
+          # Build
+          # ========================================================
+          echo "========================================"
+          echo "Starting Kernel Build"
+          echo "========================================"
 
-          mv .config build_config.txt || true
-          gitsha1=$(git rev-parse --short HEAD)
-          buildDetails="$(make kernelversion)-${DEVICE_ID}_${gitsha1}-$(date +'%Y%m%d%H%M%S')"
+          bash build_kernel.sh kernel \
+            --jobs "$(nproc --all)" \
+            "$DEFCONFIG"
+
+          # ========================================================
+          # Save config
+          # ========================================================
+          if [[ -f .config ]]; then
+            cp .config build_config.txt
+          fi
+
+          # ========================================================
+          # Build Information
+          # ========================================================
+          gitsha1="$(git rev-parse --short HEAD)"
+
+          buildDetails="$(
+            make kernelversion
+          )-${DEVICE_ID}_${gitsha1}-$(date +'%Y%m%d%H%M%S')"
+
           echo "buildDetails=$buildDetails" >> "$GITHUB_OUTPUT"
 
+          # ========================================================
+          # ccache statistics
+          # ========================================================
+          echo "========================================"
+          echo "ccache stats AFTER build"
+          echo "========================================"
+
+          ccache --show-stats
+
+      # ============================================================
+      # Save ccache
+      # ============================================================
+      - name: Save ccache
+        run: |
+          echo "Final ccache statistics:"
+          ccache --show-stats
+
+          echo "Cache directory:"
+          du -sh "$HOME/.ccache" || true
+
+      # ============================================================
+      # Upload Kernel Images
+      # ============================================================
       - name: Upload kernel images
         uses: actions/upload-artifact@v4
         with:
