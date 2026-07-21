@@ -170,9 +170,7 @@ jobs:
           echo "Clang version:"
           clang --version
 
-          echo "GCC:"
-          "${CROSS_COMPILE}gcc" --version | head -n 1
-
+          
           echo "ccache:"
           ccache --version
 
