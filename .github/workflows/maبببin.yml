@@ -1,0 +1,131 @@
+name: Build Kernel LTO
+
+on:
+  workflow_dispatch:
+    inputs:
+      BRANCH:
+        description: Kernel branch
+        default: 'main'
+        required: true
+
+      SELINUX_PERMISSIVE:
+        description: Permissive SELinux
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      # ==========================================
+      # Free Disk Space BEFORE Checkout
+      # ==========================================
+      - name: Free disk space
+        run: |
+          echo "Disk space before cleanup:"
+          df -h
+
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /opt/hostedtoolcache
+
+          sudo apt-get clean
+          sudo swapoff -a
+          sudo rm -f /swapfile
+
+          echo "Disk space after cleanup:"
+          df -h
+
+      # ==========================================
+      # Checkout Kernel
+      # ==========================================
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          repository: rasolarmand114-tech/exlinux-
+          path: kernel_root
+          ref: ${{ github.event.inputs.BRANCH }}
+          fetch-depth: 0
+          submodules: false
+
+      # ==========================================
+      # Initialize Git Submodules
+      # ==========================================
+      # ==========================================
+      # Fix KernelSU Symlink
+      # MUST RUN BEFORE BUILD
+      # =========================================
+      # ==========================================
+      # Check Disk Space
+      # ==========================================
+      - name: Check disk space
+        run: |
+          df -h
+
+      # ==========================================
+      # Prepare Dependencies
+      # ==========================================
+      - name: Prepare dependencies
+        working-directory: kernel_root
+        run: |
+          sudo apt update -y
+
+          sudo apt install -y \
+            bc \
+            cpio \
+            flex \
+            bison \
+            git \
+            python-is-python3 \
+            tar \
+            perl \
+            wget \
+            curl \
+            lz4 \
+            libssl-dev
+
+      # ==========================================
+      # Build Kernel
+      # ==========================================
+      - name: Build kernel
+        id: buildKernel
+        working-directory: kernel_root
+        run: |
+          export KBUILD_BUILD_USER="exlinux"
+          export KBUILD_BUILD_HOST="github"
+          export BUILD_START="$(date)"
+          export IS_CI=true
+
+          export DEFCONFIG="exlinux_defconfig"
+          export DEVICE_ID="A12s"
+          export DEVICE="A12s"
+
+          echo "SELinux state: Enforcing"
+
+          bash ./build.sh kernel \
+            --jobs "$(nproc --all)" \
+            "$DEFCONFIG"
+
+          mv .config build_config.txt
+
+          gitsha1="$(git rev-parse --short HEAD)"
+          kernelversion="$(make kernelversion)"
+
+          buildDetails="${kernelversion}-${DEVICE_ID}_${gitsha1}-$(date +'%Y%m%d%H%M%S')"
+
+          echo "buildDetails=$buildDetails" >> "$GITHUB_OUTPUT"
+
+      # ==========================================
+      # Upload Kernel
+      # ==========================================
+      - name: Upload kernel images
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kernel-${{ steps.buildKernel.outputs.buildDetails }}
+          path: |
+            kernel_root/arch/arm64/boot/Image
+            kernel_root/arch/arm64/boot/dts/exynos/*.dtb
+            kernel_root/arch/arm64/boot/dts/samsung/*.dtb
