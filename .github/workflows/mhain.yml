@@ -1,12 +1,13 @@
-name: Build Kernel
+name: Build Kernel LTO
 
 on:
   workflow_dispatch:
     inputs:
       BRANCH:
         description: Kernel branch
-        default: "main"
+        default: 'main'
         required: true
+
       SELINUX_PERMISSIVE:
         description: Permissive SELinux
         type: boolean
@@ -16,92 +17,115 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # ==========================================
+      # Free Disk Space BEFORE Checkout
+      # ==========================================
+      - name: Free disk space
+        run: |
+          echo "Disk space before cleanup:"
+          df -h
+
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /opt/hostedtoolcache
+
+          sudo apt-get clean
+          sudo swapoff -a
+          sudo rm -f /swapfile
+
+          echo "Disk space after cleanup:"
+          df -h
+
+      # ==========================================
+      # Checkout Kernel
+      # ==========================================
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
         with:
-          repository: 663388p000/android_kernel_samsung_a12s
+          repository: 663388p000/exlinux-
           path: kernel_root
           ref: ${{ github.event.inputs.BRANCH }}
           fetch-depth: 0
+          submodules: false
 
-      - name: Prepare dependencies + fetch tags
+      # ==========================================
+      # Initialize Git Submodules
+      # ==========================================
+      # ==========================================
+      # Fix KernelSU Symlink
+      # MUST RUN BEFORE BUILD
+      # =========================================
+      # ==========================================
+      # Check Disk Space
+      # ==========================================
+      - name: Check disk space
+        run: |
+          df -h
+
+      # ==========================================
+      # Prepare Dependencies
+      # ==========================================
+      - name: Prepare dependencies
         working-directory: kernel_root
         run: |
           sudo apt update -y
+
           sudo apt install -y \
-            bc cpio flex bison git python-is-python3 \
-            tar perl wget curl lz4 libssl-dev \
-            libclang-dev libelf-dev llvm-dev ccache 
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git fetch --tags --force
+            bc \
+            cpio \
+            flex \
+            bison \
+            git \
+            python-is-python3 \
+            tar \
+            perl \
+            wget \
+            curl \
+            lz4 \
+            libssl-dev
 
-      - name: Recreate 12GB Swap
-        run: |
-          sudo swapoff -a || true
-          sudo rm -f /swapfile
-          sudo fallocate -l 12G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=12288
-          sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
-          free -h
-      - name: Cache ccache
-        uses: actions/cache@v4
-        with:
-         path: ~/.ccache
-         key: ccache-${{ runner.os }}-${{ github.event.inputs.BRANCH }}-${{ github.sha }}
-         restore-keys: |
-          ccache-${{ runner.os }}-${{ github.event.inputs.BRANCH }}-
-          ccache-${{ runner.os }}-
-
-      - name: Fetch toolchains (Clang 11 + GCC 4.9)
-        working-directory: kernel_root
-        run: |
-          mkdir -p toolchains && cd toolchains
-          git clone --depth=1 -b clang-11 https://github.com/rsuntk/toolchains.git clang
-          git clone --depth=1 -b androidcc-4.9 https://github.com/rsuntk/toolchains.git google
-
-      - name: Set timezone
-        run: |
-          sudo rm -f /etc/localtime
-          sudo ln -sf /usr/share/zoneinfo/Asia/Kolkata /etc/localtime
-          
+      # ==========================================
+      # Build Kernel
+      # ==========================================
       - name: Build kernel
         id: buildKernel
         working-directory: kernel_root
         run: |
-          
-
-          export PATH=$(pwd)/toolchains/clang/bin:$PATH
-          export CROSS_COMPILE=$(pwd)/toolchains/google/bin/aarch64-linux-android-
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          export USE_CCACHE=1
-          export CC="ccache clang"
-          export CXX="ccache clang++"
-          export CCACHE_DIR=$HOME/.ccache         
-          export KBUILD_BUILD_USER=exlinux
-          export KBUILD_BUILD_HOST=github
+          export KBUILD_BUILD_USER="exlinux"
+          export KBUILD_BUILD_HOST="github"
+          export BUILD_START="$(date)"
           export IS_CI=true
-          export DEFCONFIG=exlinux_dri_defconfig
-          export DEVICE_ID=A12s
-          ccache -M 10G
-          ccache -z
 
-          if [[ "${{ github.event.inputs.SELINUX_PERMISSIVE }}" == "true" ]]; then
-            echo "CONFIG_SECURITY_SELINUX_ALWAYS_PERMISSIVE=y" >> arch/arm64/configs/$DEFCONFIG
-          fi
+          export DEFCONFIG="exlinux_defconfig"
+          export DEVICE_ID="A12s"
+          export DEVICE="A12s"
 
-          bash build_kernel.sh kernel --jobs $(nproc --all) $DEFCONFIG
+          echo "SELinux state: Enforcing"
 
-          mv .config build_config.txt || true
-          gitsha1=$(git rev-parse --short HEAD)
-          buildDetails="$(make kernelversion)-${DEVICE_ID}_${gitsha1}-$(date +'%Y%m%d%H%M%S')"
+          bash ./build.sh kernel \
+            --jobs "$(nproc --all)" \
+            "$DEFCONFIG"
+
+          mv .config build_config.txt
+
+          gitsha1="$(git rev-parse --short HEAD)"
+          kernelversion="$(make kernelversion)"
+
+          buildDetails="${kernelversion}-${DEVICE_ID}_${gitsha1}-$(date +'%Y%m%d%H%M%S')"
+
           echo "buildDetails=$buildDetails" >> "$GITHUB_OUTPUT"
 
+      # ==========================================
+      # Upload Kernel
+      # ==========================================
       - name: Upload kernel images
         uses: actions/upload-artifact@v4
         with:
           name: Kernel-${{ steps.buildKernel.outputs.buildDetails }}
-          if-no-files-found: warn
           path: |
             kernel_root/arch/arm64/boot/Image
             kernel_root/arch/arm64/boot/dts/exynos/*.dtb
             kernel_root/arch/arm64/boot/dts/samsung/*.dtb
-            kernel_root/build_config.txt
