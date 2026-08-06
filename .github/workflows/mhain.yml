@@ -17,28 +17,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ==========================================
-      # Free Disk Space BEFORE Checkout
-      # ==========================================
-      - name: Free disk space
-        run: |
-          echo "Disk space before cleanup:"
-          df -h
-
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/share/powershell
-          sudo rm -rf /usr/local/share/boost
-          sudo rm -rf /opt/hostedtoolcache
-
-          sudo apt-get clean
-          sudo swapoff -a
-          sudo rm -f /swapfile
-
-          echo "Disk space after cleanup:"
-          df -h
-
+      
       # ==========================================
       # Checkout Kernel
       # ==========================================
@@ -51,20 +30,7 @@ jobs:
           fetch-depth: 0
           submodules: false
 
-      # ==========================================
-      # Initialize Git Submodules
-      # ==========================================
-      # ==========================================
-      # Fix KernelSU Symlink
-      # MUST RUN BEFORE BUILD
-      # =========================================
-      # ==========================================
-      # Check Disk Space
-      # ==========================================
-      - name: Check disk space
-        run: |
-          df -h
-
+      
       # ==========================================
       # Prepare Dependencies
       # ==========================================
