@@ -1,5 +1,4 @@
 name: Build Kernel LTO
-
 on:
   workflow_dispatch:
     inputs:
