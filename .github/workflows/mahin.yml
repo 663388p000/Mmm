@@ -5,40 +5,17 @@ on:
     inputs:
       BRANCH:
         description: Kernel branch
-        default: 'main'
+        default: main
         required: true
-
       SELINUX_PERMISSIVE:
         description: Permissive SELinux
         type: boolean
+        default: false
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
-
+    runs-on: ubuntu-latest
     steps:
-      # ==========================================
-      # Free Disk Space BEFORE Checkout
-      # ==========================================
-      - name: Free disk space
-        run: |
-          echo "Disk space before cleanup:"
-          df -h
-
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/share/powershell
-          sudo rm -rf /usr/local/share/boost
-          sudo rm -rf /opt/hostedtoolcache
-
-          sudo apt-get clean
-          sudo swapoff -a
-          sudo rm -f /swapfile
-
-          echo "Disk space after cleanup:"
-          df -h
-
       # ==========================================
       # Checkout Kernel
       # ==========================================
@@ -52,27 +29,12 @@ jobs:
           submodules: false
 
       # ==========================================
-      # Initialize Git Submodules
-      # ==========================================
-      # ==========================================
-      # Fix KernelSU Symlink
-      # MUST RUN BEFORE BUILD
-      # =========================================
-      # ==========================================
-      # Check Disk Space
-      # ==========================================
-      - name: Check disk space
-        run: |
-          df -h
-
-      # ==========================================
       # Prepare Dependencies
       # ==========================================
       - name: Prepare dependencies
         working-directory: kernel_root
         run: |
           sudo apt update -y
-
           sudo apt install -y \
             bc \
             cpio \
@@ -103,7 +65,13 @@ jobs:
           export DEVICE_ID="A12s"
           export DEVICE="A12s"
 
-          echo "SELinux state: Enforcing"
+          # Set SELinux state based on input
+          if [[ "${{ github.event.inputs.SELINUX_PERMISSIVE }}" == "true" ]]; then
+            echo "SELinux state: Permissive"
+            export SELINUX_PERMISSIVE=1
+          else
+            echo "SELinux state: Enforcing"
+          fi
 
           bash ./build.sh kernel \
             --jobs "$(nproc --all)" \
